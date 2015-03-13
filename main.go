@@ -7,10 +7,31 @@ import (
 	"time"
 )
 
+var (
+	rabbitUser = os.Getenv("RABBITMQ_USER")
+	rabbitPass = os.Getenv("RABBITMQ_PASS")
+	rabbitAddr = os.Getenv("RABBITMQ_PORT_5672_TCP_ADDR")
+	rabbitPort = os.Getenv("RABBITMQ_PORT_5672_TCP_PORT")
+
+	logger = platform.GetLogger("router-tsp")
+)
+
 func main() {
 	hostname, _ := os.Hostname()
 
-	standardRouter := platform.NewStandardRouter(platform.GetDefaultPublisher(), platform.GetDefaultConsumerFactory("router_"+hostname))
+	connMgr := platform.NewAmqpConnectionManager(rabbitUser, rabbitPass, rabbitAddr+":"+rabbitPort, "")
+
+	publisher, err := platform.NewAmqpPublisher(connMgr)
+	if err != nil {
+		logger.Fatalf("> failed to create publisher: %s", err)
+	}
+
+	subscriber, err := platform.NewAmqpSubscriber(connMgr, "router_"+hostname)
+	if err != nil {
+		logger.Fatalf("> failed to create subscriber: %s", err)
+	}
+
+	standardRouter := platform.NewStandardRouter(publisher, subscriber)
 
 	teaspoon.ListenAndServe(":877", teaspoon.HandlerFunc(func(w teaspoon.ResponseWriter, r *teaspoon.Request) {
 		routedMessage, err := standardRouter.Route(&platform.RoutedMessage{
@@ -32,6 +53,7 @@ func main() {
 			}
 		}
 
+		w.SetMethod(byte(routedMessage.GetMethod()))
 		w.SetResource(int(routedMessage.GetResource()))
 		w.Write(routedMessage.GetBody())
 	}))
